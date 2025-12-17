@@ -1,12 +1,13 @@
+from abc import ABC, abstractmethod
+
 import pandas as pd
 import scanpy as sc
 
 
-class SeuratExtractor:
+class SeuratExtractor(ABC):
     """
     Base interface for all Seurat extractors (based on version)
     """
-
     def to_anndata(self, data, assay_name, layer_name):
 
         obs = self._extract_obs(data)
@@ -19,6 +20,13 @@ class SeuratExtractor:
         # Add embeddings
         adata = self._add_embeddings(adata, data)
         return adata
+
+
+    @abstractmethod
+    def _extract_assay(self, data, assay_name, layer_name):
+        """
+        Must be implemented in subclasses - this is where Seurat versions differ
+        """
 
     def _extract_obs(self, data):
 
@@ -42,4 +50,4 @@ class SeuratExtractor:
             for name, red, in data['reductions']['data'].items():
                 adata.obsm[f"X_{name.lower}"] = red['data']['cell.embeddings']
 
-        return adata
+        return
