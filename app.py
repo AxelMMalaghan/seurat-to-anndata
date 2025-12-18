@@ -1,25 +1,14 @@
-import scanpy as sc
-import rds2py
-
-from core.seurat_factory import SeuratFactory
-from in_out.h5ad_exporter import H5ADExporter
-from in_out.seurat_loader import SeuratLoader
-
+from in_out.seurat_loader import RobustSeuratLoader
 
 def main(input_path, output_name):
-    # 1. Load the raw R object
-    loader = SeuratLoader(input_path)
-    data = loader.load_data()
-
-    # 2. Convert to AnnData
-    adata = SeuratFactory.get_anndata(data)
-
-    # 3. Export to disk
-    exporter = H5ADExporter()
-    saved_path = exporter.export(adata, output_name)
-
-    print(f"Successfully converted and saved to: {saved_path}")
-
+    loader = RobustSeuratLoader()
+    try:
+        adata = loader.load_data(input_path)
+        adata.write_h5ad(f"{output_name}.h5ad")
+        print(f"Saved to {output_name}.h5ad")
+    except Exception as e:
+        print(f"Critical Error: {e}")
 
 if __name__ == "__main__":
-    main(input_path="/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds", output_name="processed_cells")
+    main(input_path="/home/axelm@.../KH_combined_2023-Jan-11.rds",
+         output_name="processed_cells")
