@@ -1,25 +1,21 @@
 import rds2py
 import numpy as np
+import os
 
 
 def summarize_structure(data, indent=0, max_depth=3):
-    """
-    Recursively explores the dictionary structure returned by rds2py
-    to reveal slots, attributes, and data shapes.
-    """
     if indent // 4 > max_depth:
-        print(" " * indent + "...")
         return
 
     if isinstance(data, dict):
         for key, value in data.items():
-            # Check for common Seurat indicators
             attr_info = ""
             if isinstance(value, dict) and 'attributes' in value:
-                attr_info = f" [Attributes: {list(value['attributes'].keys())}]"
+                # This identifies the Seurat Assay version (v4 vs v5)
+                class_attr = value['attributes'].get('class', [None])[0]
+                attr_info = f" [Class: {class_attr}]"
 
-            val_type = type(value).__name__
-            print(f"{' ' * indent}key: {key} ({val_type}){attr_info}")
+            print(f"{' ' * indent}key: {key} ({type(value).__name__}){attr_info}")
             summarize_structure(value, indent + 4, max_depth)
 
     elif isinstance(data, (np.ndarray, list)):
@@ -27,28 +23,35 @@ def summarize_structure(data, indent=0, max_depth=3):
         print(f"{' ' * indent}data: {type(data).__name__} with shape/length {shape}")
 
 
-def inspect_seurat_file(path):
-    print(f"--- Inspecting RDS File: {path} ---")
-    # parse_rds gives us the raw dictionary representation of the R object
-    obj = rds2py.parse_rds(path)
+def inspect_demo_file(path):
+    if not os.path.exists(path):
+        print(f"Error: The file does not exist at: {path}")
+        return
 
-    # 1. Identify Versioning
-    if 'version' in obj.get('attributes', {}):
-        print(f"Detected Seurat Version Attribute: {obj['attributes']['version']}")
+    print(f"--- Inspecting: {path} ---")
+    try:
+        # Using parse_rds to read the file directly into a Python dictionary
+        obj = rds2py.parse_rds(path)
 
-    # 2. Identify Assays Structure (v4 slots vs v5 layers)
-    assays = obj.get('data', {}).get('assays', {})
-    print(f"\nAssays Found: {list(assays.get('data', {}).keys())}")
+        # Check for Seurat version in the object attributes
+        version = "Unknown"
+        if 'attributes' in obj and 'version' in obj['attributes']:
+            version = obj['attributes']['version']
+        print(f"Reported Seurat Version: {version}")
 
-    # 3. Recursive Summary
-    print("\n--- Full Schema Summary ---")
-    summarize_structure(obj)
+        # Scan the assays to find the data structure
+        print("\n--- Assay Structure Scan ---")
+        if 'data' in obj and 'assays' in obj['data']:
+            summarize_structure(obj['data']['assays'], max_depth=4)
+        else:
+            print("No assays found in the expected location.")
+
+    except Exception as e:
+        print(f"RDS Parser Error: {e}")
 
 
 if __name__ == "__main__":
-    # Path from your app.py
-    demo_path = "/home/axelm@.../KH_combined_2023-Jan-11.rds"
-    try:
-        inspect_seurat_file(demo_path)
-    except Exception as e:
-        print(f"Error reading file: {e}")
+    # The absolute path we confirmed earlier
+    target_path = "/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds"
+    inspect_demo_file(target_path)
+
