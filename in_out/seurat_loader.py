@@ -16,5 +16,5 @@ class SeuratLoader:
                 raise ValueError("Invalid Seurat RDS file")
             return r_object['data']
         except Exception as e:
-            raise IOError("Seurat RDS file could not be loaded")
+            raise IOError(f"Seurat RDS file could not be loaded {e}")
 

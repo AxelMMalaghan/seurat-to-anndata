@@ -48,7 +48,7 @@ class SeuratExtractor(ABC):
         for col in df.columns:
             col_raw = meta['data'][col]
             if isinstance(col_raw, dict) and 'attributes' in col_raw:
-                levels = col_raw['attributes'].get(['levels'])
+                levels = col_raw['attributes'].get('levels')
                 if levels:
                     df[col] = [levels[i-1] for i in col_raw['data']]
 
