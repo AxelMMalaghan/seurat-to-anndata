@@ -2,78 +2,67 @@ import pandas as pd
 import scanpy as sc
 import anndata as ad
 import numpy as np
-from rpy2.robjects import r, pandas2ri
+from rpy2.robjects import r, pandas2ri, conversion, default_converter
 from rpy2.robjects.packages import importr
 
-# 1. Enable R to Pandas conversion
-pandas2ri.activate()
 
-
+# Define the converter globally or within the function
 def seurat_to_anndata(rds_path):
     print(f"--- Loading R environment and {rds_path} ---")
 
-    # Import R libraries
     base = importr('base')
     seurat = importr('Seurat')
 
-    # Load the RDS file into R memory
+    # 1. Load the RDS file
     seurat_obj = base.readRDS(rds_path)
 
-    # 2. Extract the Active Assay (e.g., RNA or SCT)
-    # We use R's accessor methods to ensure we get the right slot
-    active_assay = r('DefaultAssay')(seurat_obj)[0]
-    print(f"Active Assay detected: {active_assay}")
+    # Use the context manager to handle conversion safely
+    with conversion.localconverter(default_converter + pandas2ri.converter):
 
-    # 3. Extract the Count Matrix
-    # This pulls the 'counts' slot from the active assay
-    # We use GetAssayData to handle sparse or dense formats correctly
-    counts = r('as.matrix')(r('GetAssayData')(seurat_obj, slot="counts"))
+        # 2. Extract Assay and Counts
+        active_assay = r('DefaultAssay')(seurat_obj)[0]
+        print(f"Active Assay: {active_assay}")
 
-    # 4. Extract Metadata (obs)
-    # Seurat metadata is stored in the @meta.data slot
-    metadata = r('as.data.frame')(r('slot')(seurat_obj, "meta.data"))
+        # Get counts as a matrix
+        # Note: If memory is an issue, we can try to keep it sparse later
+        counts_r = r('as.matrix')(r('GetAssayData')(seurat_obj, slot="counts"))
+        counts_py = np.array(counts_r)
 
-    # 5. Extract Feature Metadata (var)
-    # This gets gene-level information (like gene names/IDs)
-    features = r('as.data.frame')(r('slot')(r('slot')(seurat_obj, "assays").rx2(active_assay), "meta.features"))
+        # 3. Extract Metadata (obs)
+        metadata_r = r('slot')(seurat_obj, "meta.data")
+        metadata_py = conversion.rpy2py(metadata_r)
 
-    # 6. Extract Embeddings (obsm) - Optional but useful for browsers
-    # Tries to pull UMAP or TSNE if they exist
-    embeddings = {}
-    try:
-        reductions = r('names')(r('slot')(seurat_obj, "reductions"))
-        for red in reductions:
-            emb = r('Embeddings')(seurat_obj, reduction=red)
-            embeddings[f"X_{red.lower()}"] = np.array(emb)
-            print(f"Extracted embedding: {red}")
-    except Exception as e:
-        print(f"No embeddings found: {e}")
+        # 4. Extract Embeddings (obsm)
+        embeddings = {}
+        try:
+            reductions = r('names')(r('slot')(seurat_obj, "reductions"))
+            for red in reductions:
+                emb = r('Embeddings')(seurat_obj, reduction=red)
+                embeddings[f"X_{red.lower()}"] = np.array(emb)
+                print(f"Extracted embedding: {red}")
+        except Exception:
+            print("No embeddings found.")
 
-    # 7. Assemble AnnData
-    # Transpose counts (Seurat is Features x Cells, AnnData is Cells x Features)
+    # 5. Build AnnData (Outside the converter context for better performance)
     adata = ad.AnnData(
-        X=counts.T,
-        obs=metadata,
-        var=features if not features.empty else pd.DataFrame(index=r('rownames')(counts)),
+        X=counts_py.T,
+        obs=metadata_py,
         obsm=embeddings
     )
+
+    # Set gene names (var names)
+    adata.var_names = list(r('rownames')(counts_r))
 
     return adata
 
 
-# --- Execution ---
 if __name__ == "__main__":
     path_to_file = "/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds"
-
     try:
         adata = seurat_to_anndata(path_to_file)
-        print("\n--- Success! ---")
-        print(adata)
+        print(f"\nSuccessfully converted! Shape: {adata.shape}")
 
-        # Save for your browser project
         output_h5ad = path_to_file.replace(".rds", ".h5ad")
         adata.write_h5ad(output_h5ad)
-        print(f"Saved to: {output_h5ad}")
-
     except Exception as e:
-        print(f"Conversion failed: {e}")
+        print(f"Error: {e}")
