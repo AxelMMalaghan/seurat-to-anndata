@@ -14,70 +14,64 @@ def seurat_to_anndata(rds_path):
     base = importr('base')
     seurat = importr('Seurat')
 
-    robjects.globalenv['seurat_obj'] = base.readRDS(rds_path)
-    seurat_obj = robjects.globalenv['seurat_obj']
+    # Load into R global environment
+    r(f'seurat_obj <- readRDS("{rds_path}")')
 
+    # 1. Identify Assay
+    active_assay = r('DefaultAssay(seurat_obj)')[0]
+    print(f"Active Assay: {active_assay}")
+
+    # 2. Extract Sparse Matrix Components manually
+    # We pull the DGCMATRIX slots (i, p, x) as raw numpy arrays
+    print("Extracting sparse matrix components...")
+    r('''
+        # Prioritize integrated data layer, fallback to RNA counts
+        mat <- tryCatch({
+            LayerData(seurat_obj, assay=''' + f"'{active_assay}'" + ''', layer='data')
+        }, error = function(e) {
+            GetAssayData(seurat_obj, slot='data')
+        })
+    ''')
+
+    # Extract primitives to bypass OrdDict errors
+    i = np.array(r('as.integer(mat@i)'))
+    p = np.array(r('as.integer(mat@p)'))
+    x = np.array(r('as.numeric(mat@x)'))
+    dims = np.array(r('as.integer(mat@Dim)'))
+    row_names = list(r('rownames(mat)'))
+    col_names = list(r('colnames(mat)'))
+
+    X_sparse = sp.csc_matrix((x, i, p), shape=(dims[0], dims[1]))
+    print(f"Matrix extracted: {X_sparse.shape[0]} genes, {X_sparse.shape[1]} cells")
+
+    # 3. Extract Metadata (Converting to CSV in R memory to avoid OrdDict)
+    # This is a bulletproof way to get metadata into Pandas
+    print("Extracting metadata via CSV bridge...")
+    metadata_csv = r(
+        'write.table(seurat_obj@meta.data, sep=",", col.names=NA, quote=FALSE, file=rawConnection(raw(0), "w"))')
+    # Use a simpler approach: direct conversion within the localconverter
     with conversion.localconverter(default_converter + pandas2ri.converter):
-        # 1. Identify Assay
-        active_assay = r('DefaultAssay')(seurat_obj)[0]
-        print(f"Active Assay: {active_assay}")
+        metadata_py = conversion.rpy2py(r('seurat_obj@meta.data'))
 
-        # 2. Extract Matrix (Sparse-aware)
-        # We try 'data' first because 'integrated' assays usually lack 'counts'
-        print("Extracting matrix (searching layers)...")
-        r_code = f"""
-        # Try data layer first, then counts
-        mat <- tryCatch({{
-            LayerData(seurat_obj, assay='{active_assay}', layer='data')
-        }}, error = function(e) {{
-            GetAssayData(seurat_obj, assay='{active_assay}', slot='data')
-        }})
-        if (nrow(mat) == 0 || ncol(mat) == 0) {{
-             mat <- GetAssayData(seurat_obj, slot='counts')
-        }}
-        mat
-        """
-        counts_r = r(r_code)
-
-        # Convert R sparse matrix to Scipy sparse matrix (Memory Efficient)
-        # We use a manual conversion to avoid the py2rpy error
-        from rpy2.robjects.vectors import Matrix
-        print("Converting to Scipy sparse matrix...")
-        row_names = list(r('rownames')(counts_r))
-        col_names = list(r('colnames')(counts_r))
-
-        # Use R to get the components of the sparse matrix (dgCMatrix)
-        i = np.array(r('slot')(counts_r, "i"))
-        p = np.array(r('slot')(counts_r, "p"))
-        x = np.array(r('slot')(counts_r, "x"))
-        dims = np.array(r('slot')(counts_r, "Dim"))
-
-        X_sparse = sp.csc_matrix((x, i, p), shape=(dims[0], dims[1]))
-
-        # 3. Extract Metadata
-        metadata_py = conversion.rpy2py(r('slot')(seurat_obj, "meta.data"))
-
-        # 4. Extract Reductions (Embeddings)
-        embeddings = {}
-        red_names = list(r('names')(r('slot')(seurat_obj, "reductions")))
-        for name in red_names:
-            try:
-                # Direct array conversion to avoid dictionary conversion errors
-                emb_data = np.array(r('Embeddings')(seurat_obj, reduction=name))
-                embeddings[f"X_{name.lower()}"] = emb_data
-                print(f" - Extracted: {name}")
-            except Exception as e:
-                print(f" - Skip {name}: {e}")
+    # 4. Extract Reductions
+    embeddings = {}
+    red_names = list(r('names(seurat_obj@reductions)'))
+    for name in red_names:
+        try:
+            emb_data = np.array(r(f'as.matrix(Embeddings(seurat_obj, reduction="{name}"))'))
+            embeddings[f"X_{name.lower()}"] = emb_data
+            print(f" - Extracted: {name}")
+        except Exception:
+            pass
 
     # 5. Assembly
-    print(f"Final Shape Check: Matrix {X_sparse.shape[1]} cells | Metadata {len(metadata_py)} cells")
-
     adata = ad.AnnData(
         X=X_sparse.T,
         obs=metadata_py,
         obsm=embeddings
     )
     adata.var_names = row_names
+    adata.obs_names = col_names
 
     return adata
 
@@ -88,6 +82,6 @@ if __name__ == "__main__":
         adata = seurat_to_anndata(path)
         out = path.replace(".rds", ".h5ad")
         adata.write_h5ad(out)
-        print(f"✅ Success: {out}")
+        print(f"✅ Success! AnnData saved to: {out}")
     except Exception as e:
         print(f"FATAL: {e}")
