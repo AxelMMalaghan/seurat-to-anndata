@@ -1,26 +1,20 @@
-import pandas as pd
-import scanpy as sc
 from rds2py import read_rds
 
-from dataset_loader import SeuratLoader
 from seurat_v5_extractor import SeuratV5Extractor
 from seurat_v4_extractor import SeuratV4Extractor
 
 
-
-
 class SeuratFactory:
     """
-    Orchestrates selection of version-compatible extractor
+    Creates instances of SeuratExtractor that are version compatible to the .rds file
     """
 
     @staticmethod
-    def convert(file_path, assay='RNA', layer='counts'):
-        # Use the new Loader class
-        loader = SeuratLoader(file_path)
-        data = loader.load_data()
+    def get_anndata(data, assay='RNA', layer='counts'):
+        """
+        Orchestrates selection of version-compatible extractor using version-based naming conventions
+        """
 
-        # Version detection logic
         assay_info = data.get('assays', {}).get('attributes', {})
         assay_class = assay_info.get('class', [None])[0]
 
@@ -32,4 +26,3 @@ class SeuratFactory:
             extractor = SeuratV4Extractor()
 
         return extractor.to_anndata(data, assay, layer)
-

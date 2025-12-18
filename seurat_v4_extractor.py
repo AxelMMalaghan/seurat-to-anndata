@@ -1,4 +1,4 @@
-from seurat_extractor import SeuratExtractor
+from core.seurat_extractor import SeuratExtractor
 
 
 class SeuratV4Extractor(SeuratExtractor):

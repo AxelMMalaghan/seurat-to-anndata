@@ -8,7 +8,18 @@ class SeuratExtractor(ABC):
     """
     Base interface for all Seurat extractors (based on version)
     """
+
     def to_anndata(self, data, assay_name, layer_name):
+        """
+        Orchestrates the decomposition of the Seurat object by delegating to:
+
+        * _extract_obs
+        * _extract_assay
+
+        and then recomposes the AnnData object and adds embeddings to the AnnData object (if they exist) using:
+
+        * _add_embeddings
+        """
 
         obs = self._extract_obs(data)
         var_names, X = self._extract_assay(data, assay_name, layer_name)
@@ -25,7 +36,7 @@ class SeuratExtractor(ABC):
     @abstractmethod
     def _extract_assay(self, data, assay_name, layer_name):
         """
-        Must be implemented in subclasses - this is where Seurat versions differ
+        Must be implemented in subclasses - this is where Seurat versions differ (from what I can tell)
         """
 
     def _extract_obs(self, data):
@@ -45,9 +56,11 @@ class SeuratExtractor(ABC):
 
 
     def _add_embeddings(self, adata, data):
-
+        """
+        Adds the embeddings to the AnnData object - .obsm
+        """
         if 'reductions' in data:
             for name, red, in data['reductions']['data'].items():
                 adata.obsm[f"X_{name.lower}"] = red['data']['cell.embeddings']
 
-        return
+        return adata
