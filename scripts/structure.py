@@ -1,9 +1,14 @@
-import pandas as pd
-import scanpy as sc
-import anndata as ad
+import os
+import sys
 import numpy as np
-from rpy2.robjects import r, pandas2ri, conversion, default_converter
+import anndata as ad
+# Set the R library path so rpy2 can find Seurat
+R_LIB_PATH = "/home/axelm@malaghan.org.nz/R/x86_64-pc-linux-gnu-library/4.5"
+os.environ['R_LIBS_USER'] = R_LIB_PATH
+
 from rpy2.robjects.packages import importr
+from rpy2.robjects import r, pandas2ri, conversion, default_converter
+import rpy2.robjects as robjects
 
 
 # Define the converter globally or within the function
