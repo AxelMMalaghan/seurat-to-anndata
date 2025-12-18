@@ -1,20 +1,42 @@
-from rds2py import read_rds
+import pandas as pd
+import anndata as ad
+from rpy2.robjects import r, pandas2ri
+from rpy2.robjects.packages import importr
 
-class SeuratLoader:
-    """
-    Handles the loading of a Seurat RDS file
-    """
-    def __init__(self, seurat_file_path):
-        self.seurat_file_path = seurat_file_path
 
-    def load_data(self):
+def load_seurat_to_anndata(path):
+    # Activate the automatic conversion between R and Pandas
+    pandas2ri.activate()
 
-        try:
-            r_object = read_rds(self.seurat_file_path)
-            # Ensure the structure matches expectations
-            if 'data' not in r_object:
-                raise ValueError("Invalid Seurat RDS file")
-            return r_object['data']
-        except Exception as e:
-            raise IOError(f"Seurat RDS file could not be loaded {e}")
+    # Import necessary R base package
+    base = importr('base')
 
+    print(f"Loading RDS from {path}...")
+    # Read the RDS file using R's native engine
+    # This avoids the "Unknown class: Seurat" error
+    seurat_obj = base.readRDS(path)
+
+    # 1. Extract Metadata (Standard R Dataframe -> Pandas)
+    # Accessing the @meta.data slot
+    meta_data = r('function(obj) obj@meta.data')(seurat_obj)
+
+    # 2. Extract Count Matrix
+    # We use an R snippet to pull the counts.
+    # Assumes standard Seurat v3/v4/v5 structure
+    print("Extracting counts...")
+    counts = r('''
+        function(obj) {
+            library(Seurat)
+            # Try to get counts from the default assay
+            as.matrix(GetAssayData(obj, slot = "counts"))
+        }
+    ''')(seurat_obj)
+
+    # 3. Extract PCA/UMAP Embeddings (Optional but recommended)
+    # Transpose because R is Genes x Cells, AnnData is Cells x Genes
+    adata = ad.AnnData(X=counts.T, obs=meta_data)
+
+    # 4. Cleanup
+    pandas2ri.deactivate()
+
+    return adata
