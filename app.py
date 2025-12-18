@@ -1,7 +1,7 @@
-from in_out.seurat_loader import RobustSeuratLoader
+from in_out.seurat_loader import SeuratLoader
 
 def main(input_path, output_name):
-    loader = RobustSeuratLoader()
+    loader = SeuratLoader()
     try:
         adata = loader.load_data(input_path)
         adata.write_h5ad(f"{output_name}.h5ad")
