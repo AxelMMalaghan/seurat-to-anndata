@@ -1,4 +1,3 @@
-from rds2py import read_rds
 
 from seurat_v5_extractor import SeuratV5Extractor
 from seurat_v4_extractor import SeuratV4Extractor

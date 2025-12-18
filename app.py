@@ -1,6 +1,9 @@
-from in_out.seurat_loader import SeuratLoader
+import scanpy as sc
+import rds2py
+
 from core.seurat_factory import SeuratFactory
 from in_out.h5ad_exporter import H5ADExporter
+from in_out.seurat_loader import SeuratLoader
 
 
 def main(input_path, output_name):
@@ -19,4 +22,4 @@ def main(input_path, output_name):
 
 
 if __name__ == "__main__":
-    main(input_path="/data/rds/KH_combined_2023-Jan-11.rds", output_name="processed_cells")
+    main(input_path="/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds", output_name="processed_cells")
