@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import pandas as pd
 import anndata as ad
+import scipy.sparse as sp
 from rpy2.robjects.packages import importr
 from rpy2.robjects import r, pandas2ri, conversion, default_converter
 import rpy2.robjects as robjects
@@ -10,96 +11,83 @@ import rpy2.robjects as robjects
 
 def seurat_to_anndata(rds_path):
     print(f"--- Loading R environment and {rds_path} ---")
-
-    # 1. Initialize R libraries
     base = importr('base')
-    try:
-        seurat = importr('Seurat')
-        print("✅ Seurat successfully loaded.")
-    except Exception as e:
-        print(f"❌ Seurat not found in Conda env.")
-        raise e
+    seurat = importr('Seurat')
 
-    # 2. Load the RDS file into R
-    # We assign it to a named variable in R to make indexing easier
     robjects.globalenv['seurat_obj'] = base.readRDS(rds_path)
     seurat_obj = robjects.globalenv['seurat_obj']
 
     with conversion.localconverter(default_converter + pandas2ri.converter):
-        # 3. Identify the Active Assay
+        # 1. Identify Assay
         active_assay = r('DefaultAssay')(seurat_obj)[0]
-        print(f"Active Assay detected: {active_assay}")
+        print(f"Active Assay: {active_assay}")
 
-        # 4. Extract Matrix (v4 and v5 compatible)
-        # We try LayerData (v5) first, then GetAssayData (v4)
-        print("Extracting count matrix...")
+        # 2. Extract Matrix (Sparse-aware)
+        # We try 'data' first because 'integrated' assays usually lack 'counts'
+        print("Extracting matrix (searching layers)...")
         r_code = f"""
-        tryCatch({{
-            as.matrix(LayerData(seurat_obj, assay='{active_assay}', layer='counts'))
+        # Try data layer first, then counts
+        mat <- tryCatch({{
+            LayerData(seurat_obj, assay='{active_assay}', layer='data')
         }}, error = function(e) {{
-            as.matrix(GetAssayData(seurat_obj, assay='{active_assay}', slot='counts'))
+            GetAssayData(seurat_obj, assay='{active_assay}', slot='data')
         }})
+        if (nrow(mat) == 0 || ncol(mat) == 0) {{
+             mat <- GetAssayData(seurat_obj, slot='counts')
+        }}
+        mat
         """
-        counts_mat = r(r_code)
-        counts_py = np.array(counts_mat)
+        counts_r = r(r_code)
 
-        # 5. Extract Metadata (obs)
-        print("Extracting cell metadata (obs)...")
-        metadata_r = r('slot')(seurat_obj, "meta.data")
-        metadata_py = conversion.rpy2py(metadata_r)
+        # Convert R sparse matrix to Scipy sparse matrix (Memory Efficient)
+        # We use a manual conversion to avoid the py2rpy error
+        from rpy2.robjects.vectors import Matrix
+        print("Converting to Scipy sparse matrix...")
+        row_names = list(r('rownames')(counts_r))
+        col_names = list(r('colnames')(counts_r))
 
-        # 6. Extract Dimensional Reductions (obsm)
-        print("Extracting embeddings (obsm)...")
+        # Use R to get the components of the sparse matrix (dgCMatrix)
+        i = np.array(r('slot')(counts_r, "i"))
+        p = np.array(r('slot')(counts_r, "p"))
+        x = np.array(r('slot')(counts_r, "x"))
+        dims = np.array(r('slot')(counts_r, "Dim"))
+
+        X_sparse = sp.csc_matrix((x, i, p), shape=(dims[0], dims[1]))
+
+        # 3. Extract Metadata
+        metadata_py = conversion.rpy2py(r('slot')(seurat_obj, "meta.data"))
+
+        # 4. Extract Reductions (Embeddings)
         embeddings = {}
-        try:
-            reductions = r('names')(r('slot')(seurat_obj, "reductions"))
-            for red in reductions:
-                emb = r('Embeddings')(seurat_obj, reduction=red)
-                # Map names to scanpy standard (e.g., X_umap)
-                key = f"X_{red.lower()}"
-                embeddings[key] = np.array(emb)
-                print(f" - Found embedding: {red}")
-        except Exception as e:
-            print(f" - Note: Could not extract reductions: {e}")
+        red_names = list(r('names')(r('slot')(seurat_obj, "reductions")))
+        for name in red_names:
+            try:
+                # Direct array conversion to avoid dictionary conversion errors
+                emb_data = np.array(r('Embeddings')(seurat_obj, reduction=name))
+                embeddings[f"X_{name.lower()}"] = emb_data
+                print(f" - Extracted: {name}")
+            except Exception as e:
+                print(f" - Skip {name}: {e}")
 
-    # 7. Final Validation & Assembly
-    print(f"Final Check: Matrix has {counts_py.shape[1]} cells. Metadata has {len(metadata_py)} cells.")
+    # 5. Assembly
+    print(f"Final Shape Check: Matrix {X_sparse.shape[1]} cells | Metadata {len(metadata_py)} cells")
 
-    if counts_py.shape[1] != len(metadata_py):
-        print("⚠️ Warning: Cell count mismatch! Attempting to subset metadata to match matrix...")
-        # Subset metadata based on the column names of the R matrix
-        cell_names = list(r('colnames')(counts_mat))
-        metadata_py = metadata_py.loc[cell_names]
-
-    # Transpose matrix for AnnData (Cells x Genes)
     adata = ad.AnnData(
-        X=counts_py.T,
+        X=X_sparse.T,
         obs=metadata_py,
         obsm=embeddings
     )
-
-    # Set Gene Names (var)
-    adata.var_names = list(r('rownames')(counts_mat))
+    adata.var_names = row_names
 
     return adata
 
 
 if __name__ == "__main__":
-    # Path configuration
-    input_rds = "/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds"
-    output_h5ad = input_rds.replace(".rds", ".h5ad")
-
+    path = "/home/axelm@malaghan.org.nz/seurat-to-anndata/data/rds/KH_combined_2023-Jan-11.rds"
     try:
-        adata_obj = seurat_to_anndata(input_rds)
-
-        print("\n--- Success! ---")
-        print(adata_obj)
-
-        # Writing to disk
-        print(f"Saving AnnData to {output_h5ad}...")
-        adata_obj.write_h5ad(output_h5ad)
-        print("File saved successfully.")
-
+        adata = seurat_to_anndata(path)
+        out = path.replace(".rds", ".h5ad")
+        adata.write_h5ad(out)
+        print(f"✅ Success: {out}")
     except Exception as e:
-        print(f"\nFATAL ERROR: {e}")
-        sys.exit(1)
+        print(f"FATAL: {e}")
