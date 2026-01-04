@@ -22,7 +22,29 @@ install.packages("Seurat")
 
 ## Usage
 
-### Quick Start
+### Command Line
+
+```bash
+# Basic conversion (output: input.h5ad)
+python app.py data.rds
+
+# Specify output path
+python app.py data.rds -o output.h5ad
+
+# Extract multiple layers
+python app.py data.rds --layers data counts
+
+# Use specific assay
+python app.py data.rds --assay integrated
+
+# Verbose output
+python app.py data.rds -v
+
+# Quiet mode (errors only)
+python app.py data.rds -q
+```
+
+### Python API
 
 ```python
 import logging
@@ -131,6 +153,7 @@ The primary challenge is transferring R's sparse matrix to Python. The converter
 
 ```
 seurat-to-anndata/
+├── app.py                    # CLI entry point
 ├── core/
 │   ├── seurat_extractor.py   # Abstract base class
 │   ├── seurat_factory.py     # Loads RDS, returns version-specific extractor
