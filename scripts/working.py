@@ -1,18 +1,70 @@
-import os
-import sys
 import numpy as np
-import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
-from rpy2.robjects.packages import importr
 from rpy2.robjects import r, pandas2ri, conversion, default_converter
-import rpy2.robjects as robjects
+
+
+"""
+How this works:
+
+1) Load the Seurat Object
+
+    - Imports R packages via rpy2
+    - Reads .rds files directly into R's global env
+    - Identifies the active assay (e.g "RNA", "Integrated")
+    
+2) Extract Expression Matrix
+
+    The primary challenge of this is getting the sparse matrix from R to Python. 
+    
+    The script:
+    
+        - Attempts to get data via LayerData() (Seurat v5), before falling back to GetAssayData() (v4)
+        - Extracts the raw dgCMatrix components individually
+        
+            - i: row indices
+            - p: col pointers
+            - x: non-zero values
+            - Dim: matrix dimensions 
+            
+        - Reconstructs a scipy.sparse.csc_matrix from these primitives
+
+    The manual extraction avoids rpy2's OrderedDict conversion errors that occur with some R objects.
+    
+3) Extract Cell Metadata
+
+    - Uses pandas2ri.converter within a localconverter context
+    - Directly converts seurat_obj@meta.data to a pandas DataFrame
+    - This contains the per-cell annoations
+    
+4) Extract Dimensionality Reductions
+
+    - Iterates through all reductions in seurat_obj@reductions (UMAP, PCA, TSNE, etc)
+    - Converts each embedding matrix to numpy arrays
+    - Stores them with X_ prefix (AnnData Conversion)
+    
+5) Assemble AnnData
+
+    - Creates AnnData with:
+    
+        - X: transposed sparse matrix (R is wrong way round (m x n))
+        - obs: cell metadata DataFrame
+        - obsm: embeddings dictionary
+        
+    - Sets var_names (genes) and obs_names (cells)
+    
+Output
+
+Hopefully the resulting file contains the underlying data and maybe even in the correct way!
+"""
+
+
+
 
 
 def seurat_to_anndata(rds_path):
+
     print(f"--- Loading R environment and {rds_path} ---")
-    base = importr('base')
-    seurat = importr('Seurat')
 
     # Load into R global environment
     r(f'seurat_obj <- readRDS("{rds_path}")')
@@ -21,8 +73,7 @@ def seurat_to_anndata(rds_path):
     active_assay = r('DefaultAssay(seurat_obj)')[0]
     print(f"Active Assay: {active_assay}")
 
-    # 2. Extract Sparse Matrix Components manually
-    # We pull the DGCMATRIX slots (i, p, x) as raw numpy arrays
+    # 2. Extract Sparse Matrix Components manually as raw NumPy arrays
     print("Extracting sparse matrix components...")
     r('''
         # Prioritize integrated data layer, fallback to RNA counts
